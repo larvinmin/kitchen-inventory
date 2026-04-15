@@ -9,7 +9,8 @@ import type {
   CookingIngredient,
   CookSessionWithRecipe,
   RatingCategory,
-  InventoryItemWithIngredient
+  InventoryItemWithIngredient,
+  CookSubstitutionType
 } from "@/lib/types";
 import { INVENTORY_CATEGORIES } from "@/lib/types";
 import { createBinarySearch } from "@/lib/ranking";
@@ -27,16 +28,22 @@ export default function CookPage() {
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<Phase>("cooking");
 
-  // Cooking phase state
   const [ingredients, setIngredients] = useState<(CookingIngredient & { 
     matchedInventoryItemId?: string, 
     matchedInventoryItem?: InventoryItemWithIngredient,
-    showOptions?: boolean
+    showOptions?: boolean,
+    subType?: CookSubstitutionType
   })[]>([]);
   
+  const [deletedOriginalIngredientIds, setDeletedOriginalIngredientIds] = useState<string[]>([]);
+  const [instructions, setInstructions] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [substituteModalIdx, setSubstituteModalIdx] = useState<number | null>(null);
   const [subForm, setSubForm] = useState({ name: "", amount: "", unit: "" });
+
+  const [addIngredientModalOpen, setAddIngredientModalOpen] = useState(false);
+  const [newIngredientForm, setNewIngredientForm] = useState({ name: "", amount: "", unit: "" });
 
   // Add Pantry Modal State
   const [addModalIdx, setAddModalIdx] = useState<number | null>(null);
@@ -115,11 +122,17 @@ export default function CookPage() {
               originalUnit: ri.unit || "",
               originalNotes: ri.notes || "",
               isSubstituted: false,
+              subType: "swap",
               matchedInventoryItemId: match?.id,
               matchedInventoryItem: match || undefined
             };
           })
         );
+
+        const inst = typeof resRecipe.data.instructions === "string" 
+           ? JSON.parse(resRecipe.data.instructions) 
+           : resRecipe.data.instructions;
+        setInstructions(inst || []);
       }
       setLoading(false);
     };
@@ -304,17 +317,34 @@ export default function CookPage() {
       if (!recipe || !selectedCategory) return;
     }
     setSaving(true);
-    const substitutions = ingredients.filter((ing) => ing.isSubstituted)
-      .map((ing) => ({
-        original_recipe_ingredient_id: ing.recipeIngredientId,
-        original_ingredient_name: ing.originalName,
-        original_amount: ing.originalAmount,
-        original_unit: ing.originalUnit,
-        substitute_ingredient_name: ing.substituteName!,
-        substitute_amount: ing.substituteAmount || "",
-        substitute_unit: ing.substituteUnit || "",
-        substitute_notes: ing.substituteNotes || "",
-      }));
+    const substitutions = [
+      ...ingredients.filter((ing) => ing.isSubstituted)
+        .map((ing) => ({
+          original_recipe_ingredient_id: ing.recipeIngredientId || null,
+          original_ingredient_name: ing.subType === "addition" ? null : ing.originalName,
+          original_amount: ing.originalAmount,
+          original_unit: ing.originalUnit,
+          substitute_ingredient_name: ing.substituteName!,
+          substitute_amount: ing.substituteAmount || "",
+          substitute_unit: ing.substituteUnit || "",
+          substitute_notes: ing.substituteNotes || "",
+          sub_type: ing.subType || "swap",
+        })),
+      ...deletedOriginalIngredientIds.map(id => {
+        const ri = (recipe.recipe_ingredients || []).find(r => r.id === id);
+        return {
+          original_recipe_ingredient_id: id,
+          original_ingredient_name: ri?.ingredients?.name || "Unknown",
+          original_amount: ri?.amount || "",
+          original_unit: ri?.unit || "",
+          substitute_ingredient_name: "[Deleted]",
+          substitute_amount: "",
+          substitute_unit: "",
+          substitute_notes: "",
+          sub_type: "deletion" as const,
+        };
+      })
+    ];
 
     const combinedNotes = [notes, postCookNotes].filter(Boolean).join("\n\n---\n\n");
     try {
@@ -328,6 +358,7 @@ export default function CookPage() {
           rating_category: selectedCategory,
           rating_rank: binarySearch?.getInsertionRank() ?? 0,
           substitutions,
+          modified_instructions: instructions,
         }),
       });
       if (res.ok) router.push("/cook-log");
@@ -342,7 +373,12 @@ export default function CookPage() {
     if (substituteModalIdx === null || !subForm.name.trim()) return;
     setIngredients((prev) => prev.map((ing, i) =>
         i === substituteModalIdx ? {
-              ...ing, substituteName: subForm.name, substituteAmount: subForm.amount, substituteUnit: subForm.unit, isSubstituted: true,
+              ...ing, 
+              substituteName: subForm.name, 
+              substituteAmount: subForm.amount, 
+              substituteUnit: subForm.unit, 
+              isSubstituted: true,
+              subType: "swap",
             } : ing
       )
     );
@@ -350,13 +386,76 @@ export default function CookPage() {
     setSubForm({ name: "", amount: "", unit: "" });
   };
 
+  const handleRemoveIngredient = (idx: number) => {
+    const item = ingredients[idx];
+    if (item.recipeIngredientId) {
+      setDeletedOriginalIngredientIds(prev => [...prev, item.recipeIngredientId!]);
+    }
+    setIngredients((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleAddIngredient = () => {
+    if (!newIngredientForm.name.trim()) return;
+    setIngredients(prev => [
+      ...prev,
+      {
+        originalName: "[Addition]",
+        originalAmount: "",
+        originalUnit: "",
+        originalNotes: "",
+        substituteName: newIngredientForm.name,
+        substituteAmount: newIngredientForm.amount,
+        substituteUnit: newIngredientForm.unit,
+        isSubstituted: true,
+        subType: "addition",
+      }
+    ]);
+    setAddIngredientModalOpen(false);
+    setNewIngredientForm({ name: "", amount: "", unit: "" });
+  };
+
   const undoSubstitute = (idx: number) => {
-    setIngredients((prev) => prev.map((ing, i) => i === idx ? {
-          ...ing, substituteName: undefined, substituteAmount: undefined, substituteUnit: undefined, isSubstituted: false,
-        } : ing
-      )
-    );
+    const item = ingredients[idx];
+    if (item.subType === "addition") {
+      setIngredients((prev) => prev.filter((_, i) => i !== idx));
+    } else {
+      setIngredients((prev) => prev.map((ing, i) => i === idx ? {
+            ...ing, 
+            substituteName: undefined, 
+            substituteAmount: undefined, 
+            substituteUnit: undefined, 
+            isSubstituted: false,
+            subType: "swap",
+          } : ing
+        )
+      );
+    }
     setSwipedIdx(null);
+  };
+
+  // Instruction adjustments
+  const handleUpdateInstruction = (idx: number, text: string) => {
+    setInstructions(prev => prev.map((s, i) => i === idx ? text : s));
+  };
+
+  const handleAddInstruction = () => {
+    setInstructions(prev => [...prev, ""]);
+  };
+
+  const handleDeleteInstruction = (idx: number) => {
+    setInstructions(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleMoveInstruction = (idx: number, direction: "up" | "down") => {
+    if (direction === "up" && idx === 0) return;
+    if (direction === "down" && idx === instructions.length - 1) return;
+
+    setInstructions(prev => {
+      const next = [...prev];
+      const target = direction === "up" ? idx - 1 : idx + 1;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
   };
 
   if (loading) {
@@ -379,7 +478,7 @@ export default function CookPage() {
     );
   }
 
-  const instructions = typeof recipe.instructions === "string" ? JSON.parse(recipe.instructions) : recipe.instructions;
+
 
   if (phase === "cooking") {
     return (
@@ -418,10 +517,15 @@ export default function CookPage() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ing.isSubstituted ? "bg-amber-500" : ing.matchedInventoryItemId ? "bg-green-500" : "bg-accent"}`} />
                       <div className="min-w-0">
-                        {ing.isSubstituted ? (
+                        {ing.isSubstituted && ing.subType === "swap" ? (
                           <div>
                             <span className="text-sm font-medium text-text-primary">{ing.substituteAmount} {ing.substituteUnit} {ing.substituteName}</span>
                             <span className="text-xs text-text-tertiary ml-2">(swapped)</span>
+                          </div>
+                        ) : ing.isSubstituted && ing.subType === "addition" ? (
+                          <div>
+                            <span className="text-sm font-medium text-text-primary">{ing.substituteAmount} {ing.substituteUnit} {ing.substituteName}</span>
+                            <span className="text-xs text-green-500 font-medium ml-2">(added)</span>
                           </div>
                         ) : (
                           <div className="flex items-baseline gap-1">
@@ -438,15 +542,21 @@ export default function CookPage() {
 
                     {!ing.isSubstituted && ing.showOptions && (
                       <div className="flex items-center gap-1.5 shrink-0 animate-fade-in pl-2">
-                        <button onClick={(e) => { e.stopPropagation(); setSubstituteModalIdx(idx); setSubForm({ name: "", amount: "", unit: "" }); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)); }} className="text-xs bg-bg-primary border border-border text-text-primary px-2 py-1.5 rounded-md hover:bg-bg-tertiary transition-colors">Swap</button>
-                        
-                        {ing.matchedInventoryItemId ? (
-                          <button onClick={(e) => handleRanOut(idx, e)} className="text-xs border border-red-500/30 text-red-600 font-medium px-2 py-1.5 rounded-md bg-red-500/10 hover:bg-red-500/20 transition-colors">Finished Using</button>
-                        ) : (
-                          <button onClick={(e) => { e.stopPropagation(); setAddModalIdx(idx); setAddForm({ name: ing.originalName, category: "Other", amount: ing.originalAmount || "1", unit: ing.originalUnit || "" }); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)); }} className="text-xs border border-green-500/30 text-green-600 font-medium px-2 py-1.5 rounded-md bg-green-500/10 hover:bg-green-500/20 transition-colors">Add to Inventory</button>
-                        )}
-                        
-                        <button onClick={(e) => { e.stopPropagation(); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)) }} className="text-xs text-text-tertiary hover:text-text-secondary px-2 py-1.5 transition-colors">Back</button>
+                        <div className="flex flex-col gap-1 items-stretch">
+                           <div className="flex gap-1">
+                              <button onClick={(e) => { e.stopPropagation(); setSubstituteModalIdx(idx); setSubForm({ name: "", amount: "", unit: "" }); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)); }} className="text-[10px] uppercase tracking-tight font-bold bg-bg-primary border border-border text-text-primary px-2 py-1 rounded-md hover:bg-bg-tertiary transition-colors">Swap</button>
+                              
+                              {ing.matchedInventoryItemId ? (
+                                <button onClick={(e) => handleRanOut(idx, e)} className="text-[10px] uppercase tracking-tight border border-red-500/30 text-red-600 font-bold px-2 py-1 rounded-md bg-red-500/10 hover:bg-red-500/20 transition-colors">Used Up</button>
+                              ) : (
+                                <button onClick={(e) => { e.stopPropagation(); setAddModalIdx(idx); setAddForm({ name: ing.originalName, category: "Other", amount: ing.originalAmount || "1", unit: ing.originalUnit || "" }); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)); }} className="text-[10px] uppercase tracking-tight border border-green-500/30 text-green-600 font-bold px-2 py-1 rounded-md bg-green-500/10 hover:bg-green-500/20 transition-colors">Add to Pantry</button>
+                              )}
+                           </div>
+                           <div className="flex gap-1">
+                              <button onClick={(e) => { e.stopPropagation(); handleRemoveIngredient(idx); }} className="text-[10px] uppercase tracking-tight font-bold border border-red-500/20 text-red-400 px-2 py-1 rounded-md hover:bg-red-500/5 transition-colors flex-1">Delete</button>
+                              <button onClick={(e) => { e.stopPropagation(); setIngredients(prev => prev.map((ig, i) => i === idx ? {...ig, showOptions: false} : ig)) }} className="text-[10px] uppercase tracking-tight font-bold bg-bg-tertiary text-text-tertiary px-2 py-1 rounded-md transition-colors">Back</button>
+                           </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -455,26 +565,75 @@ export default function CookPage() {
                 {/* Undo reveal */}
                 {ing.isSubstituted && swipedIdx === idx && (
                   <div className="absolute right-0 top-0 bottom-0 flex items-center gap-1 pr-2">
-                    <div className="text-xs text-text-tertiary px-2">was: {ing.originalName}</div>
-                    <button onClick={() => undoSubstitute(idx)} className="px-2 py-1 text-xs bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20">Undo</button>
+                    <div className="text-xs text-text-tertiary px-2">{ing.subType === "addition" ? "Newly Added" : `was: ${ing.originalName}`}</div>
+                    <button onClick={() => undoSubstitute(idx)} className="px-2 py-1 text-xs bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20">{ing.subType === "addition" ? "Remove" : "Restore"}</button>
                   </div>
                 )}
               </div>
             ))}
+            
+            {/* Add Ingredient Button */}
+            <button 
+              onClick={() => setAddIngredientModalOpen(true)}
+              className="w-full p-3 rounded-xl border border-dashed border-border text-text-tertiary text-sm hover:border-accent hover:text-accent transition-all group flex items-center justify-center gap-2"
+            >
+              <span className="text-lg">+</span> Add Ingredient
+            </button>
           </div>
         </div>
 
-        {/* Instructions block */}
         <div className="glass rounded-2xl p-5 mb-5">
-          <h2 className="text-sm font-semibold text-text-primary mb-4 uppercase tracking-wider">Instructions</h2>
-          <ol className="space-y-3">
-            {(instructions as string[]).map((step: string, i: number) => (
-              <li key={i} className="flex gap-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-accent/10 text-accent text-xs font-bold shrink-0">{i + 1}</span>
-                <p className="text-sm text-text-secondary leading-relaxed pt-0.5">{step}</p>
-              </li>
+          <div className="flex items-center justify-between mb-4">
+             <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Instructions</h2>
+             <button 
+                onClick={handleAddInstruction}
+                className="text-xs text-accent font-medium hover:text-accent-hover transition-colors"
+             >
+                + Add Step
+             </button>
+          </div>
+          <div className="space-y-4">
+            {instructions.map((step: string, i: number) => (
+                <div
+                   draggable={phase === "cooking"}
+                   onDragStart={() => setDraggedIndex(i)}
+                   onDragOver={(e) => {
+                     e.preventDefault();
+                     if (draggedIndex === null || draggedIndex === i) return;
+                     const next = [...instructions];
+                     const [moved] = next.splice(draggedIndex, 1);
+                     next.splice(i, 0, moved);
+                     setInstructions(next);
+                     setDraggedIndex(i);
+                   }}
+                   onDragEnd={() => setDraggedIndex(null)}
+                   className={`flex gap-3 group px-2 py-1.5 rounded-xl transition-colors ${draggedIndex === i ? "bg-accent/5 border border-dashed border-accent/20" : ""}`}
+                >
+                  <div className="flex flex-col items-center pt-1 cursor-grab active:cursor-grabbing">
+                     <svg className="w-5 h-5 text-text-tertiary group-hover:text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                     </svg>
+                  </div>
+                <div className="flex-1 relative">
+                  <span className="absolute -left-6 top-1 flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white text-[10px] font-black shrink-0 shadow-lg shadow-accent/20">{i + 1}</span>
+                  <div className="flex gap-2">
+                    <textarea 
+                       value={step} 
+                       onChange={(e) => handleUpdateInstruction(i, e.target.value)}
+                       className="flex-1 p-3 rounded-xl bg-bg-secondary/50 border border-border text-sm text-text-secondary leading-relaxed resize-none h-auto min-h-[48px] focus:border-accent focus:bg-bg-secondary outline-none transition-all"
+                       rows={Math.max(1, step.split('\n').length)}
+                    />
+                    <button 
+                      onClick={() => handleDeleteInstruction(i)}
+                      className="p-2 text-text-tertiary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
             ))}
-          </ol>
+          </div>
         </div>
 
         {/* Cooking Notes */}
@@ -528,6 +687,27 @@ export default function CookPage() {
               <div className="flex gap-3 mt-5">
                 <button onClick={() => setSubstituteModalIdx(null)} className="flex-1 py-2.5 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-bg-secondary cursor-pointer">Cancel</button>
                 <button onClick={applySubstitute} disabled={!subForm.name.trim()} className="flex-1 py-2.5 rounded-xl bg-accent text-text-inverse text-sm font-bold hover:bg-accent-hover disabled:opacity-40">Swap</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add New Ingredient Modal */}
+        {addIngredientModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="glass rounded-2xl p-6 w-full max-w-sm">
+              <h3 className="text-lg font-bold text-text-primary mb-1">Add New Ingredient</h3>
+              <p className="text-xs text-text-tertiary mb-4">Adding an extra ingredient to this session.</p>
+              <div className="space-y-3">
+                <input type="text" value={newIngredientForm.name} onChange={(e) => setNewIngredientForm({ ...newIngredientForm, name: e.target.value })} placeholder="Ingredient name (e.g. Garlic powder)" className="w-full p-3 rounded-xl bg-bg-secondary border border-border text-text-primary text-sm focus:border-accent outline-none" autoFocus />
+                <div className="flex gap-2">
+                  <input type="text" value={newIngredientForm.amount} onChange={(e) => setNewIngredientForm({ ...newIngredientForm, amount: e.target.value })} placeholder="Amount (e.g. 1)" className="flex-1 p-3 rounded-xl bg-bg-secondary border border-border text-text-primary text-sm focus:border-accent outline-none" />
+                  <input type="text" value={newIngredientForm.unit} onChange={(e) => setNewIngredientForm({ ...newIngredientForm, unit: e.target.value })} placeholder="Unit (e.g. tsp)" className="flex-1 p-3 rounded-xl bg-bg-secondary border border-border text-text-primary text-sm focus:border-accent outline-none" />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-5">
+                <button onClick={() => setAddIngredientModalOpen(false)} className="flex-1 py-2.5 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-bg-secondary cursor-pointer">Cancel</button>
+                <button onClick={handleAddIngredient} disabled={!newIngredientForm.name.trim()} className="flex-1 py-2.5 rounded-xl bg-accent text-text-inverse text-sm font-bold hover:bg-accent-hover disabled:opacity-40">Add Ingredient</button>
               </div>
             </div>
           </div>

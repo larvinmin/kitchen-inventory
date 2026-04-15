@@ -105,22 +105,26 @@ export interface DbCookSession {
   rating_category: RatingCategory | null;
   rating_rank: number | null;
   rating_score: number | null;
+  modified_instructions: string[] | null;
   started_at: string;
   completed_at: string | null;
   created_at: string;
 }
 
+export type CookSubstitutionType = "swap" | "addition" | "deletion";
+
 export interface DbCookSubstitution {
   id: string;
   cook_session_id: string;
   original_recipe_ingredient_id: string | null;
-  original_ingredient_name: string;
+  original_ingredient_name: string | null;
   original_amount: string | null;
   original_unit: string | null;
   substitute_ingredient_name: string;
   substitute_amount: string | null;
   substitute_unit: string | null;
   substitute_notes: string | null;
+  sub_type: CookSubstitutionType;
 }
 
 // Joined session with recipe info for display
@@ -142,7 +146,7 @@ export interface RankingComparison {
 
 // Ingredient with optional substitution overlay (for cooking mode)
 export interface CookingIngredient {
-  recipeIngredientId: string;
+  recipeIngredientId?: string;
   originalName: string;
   originalAmount: string;
   originalUnit: string;

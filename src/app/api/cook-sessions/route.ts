@@ -55,6 +55,7 @@ export async function POST(request: Request) {
     photo_url,
     rating_category,
     rating_rank, // insertion rank from pairwise comparison
+    modified_instructions, // optional array of strings
     substitutions, // array of substitution objects
   } = body;
 
@@ -105,6 +106,7 @@ export async function POST(request: Request) {
       rating_category,
       rating_rank: rating_rank ?? 0,
       rating_score: 0, // will be recomputed below
+      modified_instructions: modified_instructions || null,
       completed_at: new Date().toISOString(),
     })
     .select()
@@ -123,24 +125,26 @@ export async function POST(request: Request) {
     const subsToInsert = substitutions.map(
       (sub: {
         original_recipe_ingredient_id?: string;
-        original_ingredient_name: string;
+        original_ingredient_name?: string;
         original_amount?: string;
         original_unit?: string;
         substitute_ingredient_name: string;
         substitute_amount?: string;
         substitute_unit?: string;
         substitute_notes?: string;
+        sub_type?: string;
       }) => ({
         cook_session_id: session.id,
         original_recipe_ingredient_id:
           sub.original_recipe_ingredient_id || null,
-        original_ingredient_name: sub.original_ingredient_name,
+        original_ingredient_name: sub.original_ingredient_name || null,
         original_amount: sub.original_amount || null,
         original_unit: sub.original_unit || null,
         substitute_ingredient_name: sub.substitute_ingredient_name,
         substitute_amount: sub.substitute_amount || null,
         substitute_unit: sub.substitute_unit || null,
         substitute_notes: sub.substitute_notes || null,
+        sub_type: sub.sub_type || "swap",
       })
     );
 

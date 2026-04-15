@@ -15,6 +15,8 @@ export default function RecipeDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [buildingList, setBuildingList] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
   
   // To handle the custom tooltip/popup for matched items
   const [activeTooltipIdx, setActiveTooltipIdx] = useState<number | null>(null);
@@ -101,6 +103,30 @@ export default function RecipeDetailPage() {
 
     if (!error) {
       setRecipe({ ...recipe, want_to_make: newValue });
+    }
+  };
+
+  const handleUpdateTitle = async () => {
+    if (!recipe) return;
+    const finalTitle = editedTitle.trim();
+    if (!finalTitle || finalTitle === recipe.title) {
+      setIsEditingTitle(false);
+      return;
+    }
+    
+    const prevTitle = recipe.title;
+    setRecipe({ ...recipe, title: finalTitle });
+    setIsEditingTitle(false);
+
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("recipes")
+      .update({ title: finalTitle })
+      .eq("id", recipe.id);
+
+    if (error) {
+      alert("Failed to update recipe title.");
+      setRecipe({ ...recipe, title: prevTitle });
     }
   };
 
@@ -243,12 +269,37 @@ export default function RecipeDetailPage() {
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">
-            {recipe.title}
-          </h1>
+        <div className="flex-1 min-w-0 pr-4">
+          {isEditingTitle ? (
+            <input
+              type="text"
+              value={editedTitle}
+              autoFocus
+              onChange={(e) => setEditedTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleUpdateTitle();
+                else if (e.key === "Escape") {
+                  setIsEditingTitle(false);
+                  setEditedTitle(recipe.title);
+                }
+              }}
+              onBlur={handleUpdateTitle}
+              className="text-2xl font-bold text-text-primary bg-bg-secondary w-full p-1 -ml-1 border border-accent/50 rounded-lg outline-none focus:ring-2 focus:ring-accent/50"
+            />
+          ) : (
+            <h1 
+              onClick={() => { setIsEditingTitle(true); setEditedTitle(recipe.title); }}
+              className="text-2xl font-bold text-text-primary cursor-pointer hover:text-accent transition-colors flex items-center gap-2 group w-full"
+              title="Click to edit title"
+            >
+              <span className="truncate">{recipe.title}</span>
+              <svg className="w-5 h-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+              </svg>
+            </h1>
+          )}
           {recipe.description && (
-            <p className="text-text-secondary mt-1">{recipe.description}</p>
+            <p className="text-text-secondary mt-2 leading-relaxed">{recipe.description}</p>
           )}
         </div>
 

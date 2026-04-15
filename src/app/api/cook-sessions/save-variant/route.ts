@@ -49,20 +49,18 @@ export async function POST(request: Request) {
 
   const originalRecipe = session.recipes;
   const substitutions = session.cook_substitutions || [];
+  const modifiedInstructions = session.modified_instructions;
 
-  if (substitutions.length === 0) {
-    return NextResponse.json(
-      { error: "No substitutions to create a variant from" },
-      { status: 400 }
-    );
+  // Build substitution naming
+  let variantTitle = originalRecipe.title;
+  if (substitutions.length > 0) {
+    const subNames = substitutions
+      .filter((s: any) => s.sub_type !== "deletion")
+      .map((s: { substitute_ingredient_name: string }) => s.substitute_ingredient_name)
+      .slice(0, 3)
+      .join(", ");
+    variantTitle = `${originalRecipe.title} (Iterated with ${subNames || "changes"})`;
   }
-
-  // Build substitution name suffix
-  const subNames = substitutions
-    .map((s: { substitute_ingredient_name: string }) => s.substitute_ingredient_name)
-    .slice(0, 3)
-    .join(", ");
-  const variantTitle = `${originalRecipe.title} (with ${subNames})`;
 
   // Create the variant recipe
   const { data: variantRecipe, error: createError } = await supabase
@@ -75,7 +73,7 @@ export async function POST(request: Request) {
       prep_time: originalRecipe.prep_time,
       cook_time: originalRecipe.cook_time,
       total_time: originalRecipe.total_time,
-      instructions: originalRecipe.instructions,
+      instructions: modifiedInstructions || originalRecipe.instructions,
       tags: originalRecipe.tags,
       source_url: originalRecipe.source_url,
       source_platform: originalRecipe.source_platform,
@@ -93,52 +91,38 @@ export async function POST(request: Request) {
     );
   }
 
-  // Copy ingredients from original, applying substitutions
+  // Copy ingredients logic
   const { data: originalIngredients } = await supabase
     .from("recipe_ingredients")
     .select("*, ingredients (*)")
     .eq("recipe_id", originalRecipe.id)
     .order("order_index");
 
+  let currentOrder = 0;
+
+  // 1. Handle original ingredients (Copy or Swap or Skip if Deleted)
   if (originalIngredients) {
     for (const ri of originalIngredients) {
-      // Check if this ingredient was substituted
       const sub = substitutions.find(
-        (s: { original_recipe_ingredient_id: string | null }) =>
+        (s: { original_recipe_ingredient_id: string | null; sub_type: string }) =>
           s.original_recipe_ingredient_id === ri.id
       );
 
       if (sub) {
-        // Find or create the substitute ingredient
-        let ingredientId: string;
-        const { data: existing } = await supabase
-          .from("ingredients")
-          .select("id")
-          .eq("name", sub.substitute_ingredient_name)
-          .maybeSingle();
-
-        if (existing) {
-          ingredientId = existing.id;
-        } else {
-          const { data: newIng } = await supabase
-            .from("ingredients")
-            .insert({
-              name: sub.substitute_ingredient_name,
-              created_by: user.id,
-            })
-            .select("id")
-            .single();
-
-          ingredientId = newIng!.id;
+        if (sub.sub_type === "deletion") {
+          // Skip this ingredient entirely
+          continue;
         }
 
+        // It was a swap
+        const ingredientId = await getOrCreateIngredient(supabase, user.id, sub.substitute_ingredient_name);
         await supabase.from("recipe_ingredients").insert({
           recipe_id: variantRecipe.id,
           ingredient_id: ingredientId,
           amount: sub.substitute_amount || ri.amount,
           unit: sub.substitute_unit || ri.unit,
           notes: sub.substitute_notes || null,
-          order_index: ri.order_index,
+          order_index: currentOrder++,
         });
       } else {
         // Copy as-is
@@ -148,10 +132,24 @@ export async function POST(request: Request) {
           amount: ri.amount,
           unit: ri.unit,
           notes: ri.notes,
-          order_index: ri.order_index,
+          order_index: currentOrder++,
         });
       }
     }
+  }
+
+  // 2. Handle additions (New ingredients not in the original recipe)
+  const additions = substitutions.filter((s: any) => s.sub_type === "addition");
+  for (const add of additions) {
+     const ingredientId = await getOrCreateIngredient(supabase, user.id, add.substitute_ingredient_name);
+     await supabase.from("recipe_ingredients").insert({
+        recipe_id: variantRecipe.id,
+        ingredient_id: ingredientId,
+        amount: add.substitute_amount || null,
+        unit: add.substitute_unit || null,
+        notes: add.substitute_notes || null,
+        order_index: currentOrder++,
+     });
   }
 
   // Link the variant to the cook session
@@ -164,4 +162,26 @@ export async function POST(request: Request) {
     { variant: variantRecipe },
     { status: 201 }
   );
+}
+
+async function getOrCreateIngredient(supabase: any, userId: string, name: string) {
+  const normalizedName = name.toLowerCase().trim();
+  const { data: existing } = await supabase
+    .from("ingredients")
+    .select("id")
+    .eq("name", normalizedName)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  const { data: newIng } = await supabase
+    .from("ingredients")
+    .insert({
+      name: normalizedName,
+      created_by: userId,
+    })
+    .select("id")
+    .single();
+
+  return newIng!.id;
 }

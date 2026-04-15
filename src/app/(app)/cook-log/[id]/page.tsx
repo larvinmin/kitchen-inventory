@@ -272,35 +272,101 @@ export default function CookSessionDetailPage() {
         )}
       </div>
 
-      {/* Substitutions */}
-      {session.cook_substitutions && session.cook_substitutions.length > 0 && (
+      {/* Modifications (Substitutions) */}
+      {(session.cook_substitutions && session.cook_substitutions.length > 0 || (session.modified_instructions && session.modified_instructions.length > 0)) && (
         <div className="glass rounded-2xl p-5 mb-6">
-          <h2 className="text-sm font-semibold text-text-primary mb-3 uppercase tracking-wider">
-            🔄 Ingredient Swaps
+          <h2 className="text-sm font-bold text-text-primary mb-4 uppercase tracking-wider flex items-center gap-2">
+            🛠 Modifications
           </h2>
-          <div className="space-y-2.5">
-            {session.cook_substitutions.map((sub) => (
-              <div
-                key={sub.id}
-                className="flex items-center gap-3 p-3 rounded-xl bg-bg-secondary/50 border border-border"
-              >
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm text-text-tertiary line-through">
-                    {sub.original_amount} {sub.original_unit}{" "}
-                    {sub.original_ingredient_name}
-                  </span>
-                </div>
-                <svg className="w-4 h-4 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                </svg>
-                <div className="flex-1 min-w-0 text-right">
-                  <span className="text-sm font-medium text-text-primary">
-                    {sub.substitute_amount} {sub.substitute_unit}{" "}
-                    {sub.substitute_ingredient_name}
-                  </span>
+          
+          <div className="space-y-6">
+            {/* Swaps */}
+            {session.cook_substitutions.filter(s => s.sub_type === "swap").length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-black text-text-tertiary uppercase tracking-widest mb-2 px-1">Swaps</h3>
+                <div className="space-y-2">
+                  {session.cook_substitutions.filter(s => s.sub_type === "swap").map((sub) => (
+                    <div key={sub.id} className="flex items-center gap-3 p-3 rounded-xl bg-bg-secondary/50 border border-border">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-text-tertiary line-through truncate block">
+                          {sub.original_amount} {sub.original_unit} {sub.original_ingredient_name}
+                        </span>
+                      </div>
+                      <svg className="w-3 h-3 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+                      <div className="flex-1 min-w-0 text-right">
+                        <span className="text-sm font-bold text-text-primary">
+                          {sub.substitute_amount} {sub.substitute_unit} {sub.substitute_ingredient_name}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
+
+            {/* Additions */}
+            {session.cook_substitutions.filter(s => s.sub_type === "addition").length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-black text-text-tertiary uppercase tracking-widest mb-2 px-1">Additions</h3>
+                <div className="space-y-2">
+                  {session.cook_substitutions.filter(s => s.sub_type === "addition").map((sub) => (
+                    <div key={sub.id} className="flex items-center gap-3 p-3 rounded-xl bg-bg-secondary/50 border border-border">
+                      <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500 text-xs font-bold">+</div>
+                      <div className="flex-1">
+                        <span className="text-sm font-bold text-text-primary">
+                          {sub.substitute_amount} {sub.substitute_unit} {sub.substitute_ingredient_name}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Deletions */}
+            {session.cook_substitutions.filter(s => s.sub_type === "deletion").length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-black text-text-tertiary uppercase tracking-widest mb-2 px-1">Deletions</h3>
+                <div className="space-y-2">
+                  {session.cook_substitutions.filter(s => s.sub_type === "deletion").map((sub) => (
+                    <div key={sub.id} className="flex items-center gap-3 p-3 rounded-xl bg-bg-secondary/50 border border-border opacity-60">
+                      <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500 text-xs font-bold">−</div>
+                      <div className="flex-1">
+                        <span className="text-sm text-text-tertiary line-through">
+                          {sub.original_amount} {sub.original_unit} {sub.original_ingredient_name}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Instruction Changes */}
+            {session.modified_instructions && (
+              <div className="pt-2 border-t border-border/50">
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-2">
+                      <span className="text-lg">📝</span>
+                      <span className="text-sm font-semibold text-text-primary">
+                         You changed {Math.abs((session.modified_instructions?.length || 0) - (typeof session.recipes?.instructions === 'string' ? JSON.parse(session.recipes.instructions).length : (session.recipes?.instructions?.length || 0)))} steps
+                      </span>
+                   </div>
+                   <button 
+                     onClick={() => {
+                        const original = typeof session.recipes?.instructions === 'string' 
+                           ? JSON.parse(session.recipes.instructions) 
+                           : session.recipes?.instructions || [];
+                        console.log("Original vs Modified:", original, session.modified_instructions);
+                        alert("Modified steps saved! Click 'Save as Recipe Iteration' to create a new version with these steps.");
+                     }}
+                     className="text-[10px] font-bold text-accent uppercase tracking-tight"
+                   >
+                     Modified
+                   </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Save as Variant */}
@@ -308,13 +374,13 @@ export default function CookSessionDetailPage() {
             <button
               onClick={handleSaveAsVariant}
               disabled={savingVariant}
-              className="mt-4 w-full py-3 rounded-xl bg-accent/10 border border-accent/20 text-accent text-sm font-medium hover:bg-accent/20 transition-all cursor-pointer disabled:opacity-60"
+              className="mt-6 w-full py-3.5 rounded-xl bg-accent text-white text-sm font-bold hover:bg-accent-hover transition-all cursor-pointer shadow-lg shadow-accent/20 active:scale-[0.98] disabled:opacity-60"
             >
               {savingVariant ? "Saving..." : "💾 Save as Recipe Iteration"}
             </button>
           )}
           {variantSaved && (
-            <div className="mt-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm text-center font-medium">
+            <div className="mt-6 py-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm text-center font-bold">
               ✅ Saved as a recipe Iteration!
             </div>
           )}
