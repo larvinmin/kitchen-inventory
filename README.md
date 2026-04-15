@@ -11,7 +11,7 @@ Built with **Next.js 16**, **Supabase**, **Gemini AI**, and **Apify**.
 - **Photo Upload** — Photograph your finished meals (stored in Supabase Storage)
 - **Beli-Style Ranking** — Rate meals as bad/ok/good, then refine position via pairwise comparisons. Scores are distributed along a bell curve within each category (0–3.3, 3.3–6.7, 6.7–10)
 - **Cook Log** — View all meals ranked by score with drag-and-drop reordering
-- **Recipe Variants** — Save substituted recipes as variants linked to the original
+- **Recipe Iteration** — Save substituted recipes as iterations linked to the original
 
 ## Getting Started
 

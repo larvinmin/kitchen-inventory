@@ -4,38 +4,56 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
-import type { RecipeWithIngredients } from "@/lib/types";
+import fuzzysort from "fuzzysort";
+import type { RecipeWithIngredients, InventoryItemWithIngredient } from "@/lib/types";
 
 export default function RecipeDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [recipe, setRecipe] = useState<RecipeWithIngredients | null>(null);
+  const [inventory, setInventory] = useState<InventoryItemWithIngredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [buildingList, setBuildingList] = useState(false);
+  
+  // To handle the custom tooltip/popup for matched items
+  const [activeTooltipIdx, setActiveTooltipIdx] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const supabase = createClient();
-    supabase
-      .from("recipes")
-      .select(
-        `
-        *,
-        recipe_ingredients (
+    const fetchAll = async () => {
+      // Fetch recipe
+      const supabase = createClient();
+      const recipePromise = supabase
+        .from("recipes")
+        .select(
+          `
           *,
-          ingredients (*)
+          recipe_ingredients (
+            *,
+            ingredients (*)
+          )
+        `
         )
-      `
-      )
-      .eq("id", params.id as string)
-      .single()
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (!error && data) {
-          setRecipe(data as RecipeWithIngredients);
-        }
-        setLoading(false);
-      });
+        .eq("id", params.id as string)
+        .single();
+        
+      // Fetch inventory for matching
+      const invPromise = fetch("/api/inventory").then(res => res.json());
+
+      const [recipeRes, invRes] = await Promise.all([recipePromise, invPromise]);
+      
+      if (cancelled) return;
+      if (!recipeRes.error && recipeRes.data) {
+        setRecipe(recipeRes.data as RecipeWithIngredients);
+      }
+      if (invRes.items) {
+        setInventory(invRes.items);
+      }
+      setLoading(false);
+    };
+    
+    fetchAll();
     return () => { cancelled = true; };
   }, [params.id]);
 
@@ -83,6 +101,59 @@ export default function RecipeDetailPage() {
 
     if (!error) {
       setRecipe({ ...recipe, want_to_make: newValue });
+    }
+  };
+
+  // Helper to find inventory match
+  const getMatch = (ingredientName: string | undefined) => {
+    if (!ingredientName || ingredientName.trim() === "" || inventory.length === 0) return null;
+    
+    // First try a standard substring block as it's often more accurate for components like "Yellow Onion" -> "Onion"
+    const substringMatch = inventory.find(i => {
+      const invName = (i.ingredients?.name || "").trim().toLowerCase();
+      if (!invName) return false;
+      const targetName = ingredientName.trim().toLowerCase();
+      return invName.includes(targetName) || targetName.includes(invName);
+    });
+    if (substringMatch) return substringMatch;
+
+    // Fallback to fuzzy logic (allows for typos)
+    const res = fuzzysort.go(ingredientName, inventory, { key: "ingredients.name", limit: 1, threshold: -500 });
+    if (res && res.length > 0) return res[0].obj;
+    
+    return null;
+  };
+
+  const buildGroceryList = async () => {
+    if (!recipe || !recipe.recipe_ingredients) return;
+    setBuildingList(true);
+    try {
+      const missing = recipe.recipe_ingredients.filter(ri => !getMatch(ri.ingredients?.name));
+      if (missing.length === 0) {
+        alert("You already have all ingredients!");
+        return;
+      }
+      const items = missing.map(ri => ({
+        name: ri.ingredients?.name || "Unknown",
+        amount: ri.amount,
+        unit: ri.unit
+      }));
+      const res = await fetch("/api/grocery-list/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items })
+      });
+      if (res.ok) {
+         alert(`Added missing ingredients to Grocery List!`);
+      } else {
+         const errorData = await res.json();
+         alert(`Failed to build grocery list: ${errorData.error}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to build grocery list. Check your network or API keys.");
+    } finally {
+      setBuildingList(false);
     }
   };
 
@@ -134,7 +205,7 @@ export default function RecipeDetailPage() {
   );
 
   return (
-    <div className="max-w-3xl mx-auto animate-fade-in">
+    <div className="max-w-3xl mx-auto animate-fade-in pb-24">
       {/* Back */}
       <Link
         href="/recipes"
@@ -240,6 +311,18 @@ export default function RecipeDetailPage() {
             </svg>
           </button>
 
+          {/* Build Grocery List */}
+          <button
+            onClick={buildGroceryList}
+            disabled={buildingList}
+            className="p-2.5 rounded-xl border border-border bg-bg-tertiary text-text-tertiary hover:text-green-500 hover:border-green-500/20 hover:bg-green-500/10 transition-all cursor-pointer disabled:opacity-50"
+            title="Add missing items to Grocery List"
+          >
+             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+             </svg>
+          </button>
+
           {/* Delete */}
           <button
             onClick={handleDelete}
@@ -342,31 +425,49 @@ export default function RecipeDetailPage() {
           Ingredients
         </h2>
 
-        <ul className="space-y-2.5">
-          {sortedIngredients.map((ri, i) => (
-            <li key={i} className="flex items-baseline gap-2 text-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 mt-1.5" />
-              <span>
-                {ri.amount && (
-                  <span className="font-medium text-text-primary">
-                    {ri.amount}
+        <ul className="space-y-2">
+          {sortedIngredients.map((ri, i) => {
+            const matchedInv = getMatch(ri.ingredients?.name);
+            
+            return (
+              <li 
+                key={i} 
+                onClick={() => matchedInv ? setActiveTooltipIdx(activeTooltipIdx === i ? null : i) : null}
+                className={`relative group flex items-baseline gap-2 text-sm p-3 border rounded-xl transition-colors ${matchedInv ? "bg-green-500/10 border-green-500/20 text-green-600 cursor-pointer hover:bg-green-500/20" : "bg-bg-primary border-border text-text-primary"}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${matchedInv ? "bg-green-500" : "bg-accent"}`} />
+                <span>
+                  {ri.amount && (
+                    <span className="font-medium mr-1">
+                      {ri.amount}
+                    </span>
+                  )}
+                  {ri.unit && (
+                    <span className={matchedInv ? "opacity-80 mr-1" : "text-text-secondary mr-1"}>{ri.unit}</span>
+                  )}
+                  <span className={matchedInv ? "font-medium" : "text-text-primary"}>
+                    {ri.ingredients?.name || "Unknown ingredient"}
                   </span>
-                )}{" "}
-                {ri.unit && (
-                  <span className="text-text-secondary">{ri.unit}</span>
-                )}{" "}
-                <span className="text-text-primary">
-                  {ri.ingredients?.name || "Unknown ingredient"}
+                  {ri.notes && (
+                    <span className={`italic ml-1 ${matchedInv ? "opacity-70" : "text-text-tertiary"}`}>
+                      — {ri.notes}
+                    </span>
+                  )}
                 </span>
-                {ri.notes && (
-                  <span className="text-text-tertiary italic">
-                    {" "}
-                    — {ri.notes}
-                  </span>
+                
+                {/* Custom Tooltip */}
+                {matchedInv && activeTooltipIdx === i && (
+                  <div className="absolute top-full left-0 z-10 mt-1 bg-green-50 shadow-md border border-green-200/50 rounded-lg p-2.5 w-64 animate-fade-in text-green-900 pointer-events-none">
+                     <p className="text-xs uppercase font-bold text-green-700/70 tracking-wider mb-0.5">In Inventory</p>
+                     <p className="text-sm font-semibold">{matchedInv.amount || "1"} {matchedInv.unit || ""} {matchedInv.ingredients.name}</p>
+                     {matchedInv.expires_at && (
+                       <p className="text-xs text-green-700 mt-1 opacity-80">Exp: {matchedInv.expires_at.split("T")[0]}</p>
+                     )}
+                  </div>
                 )}
-              </span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       </div>
 

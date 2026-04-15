@@ -20,7 +20,7 @@ export interface ParsedRecipe {
   sourceUrl: string;
   sourcePlatform: "instagram" | "youtube" | "tiktok" | "manual";
   sourceThumbnail?: string;
-  extractionMethod: "caption" | "video";
+  extractionMethod: "caption" | "video" | "manual";
 }
 
 // Database row shapes (from Supabase)
@@ -153,4 +153,57 @@ export interface CookingIngredient {
   substituteUnit?: string;
   substituteNotes?: string;
   isSubstituted: boolean;
+}
+
+// ─── Inventory types ─────────────────────────────────────
+
+export interface DbInventoryItem {
+  id: string;
+  user_id: string;
+  ingredient_id: string;
+  amount: string | null;
+  unit: string | null;
+  notes: string | null;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Joined inventory item with ingredient details for display
+export interface InventoryItemWithIngredient extends DbInventoryItem {
+  ingredients: DbIngredient;
+}
+
+// Constant list of categories for Inventory bucketing
+export const INVENTORY_CATEGORIES = [
+  "Meat",
+  "Seafood",
+  "Breads",
+  "Dairy",
+  "Fruit & Vegetable",
+  "Spices & Seasoning",
+  "Pantry",
+  "Other"
+] as const;
+
+export type InventoryCategory = typeof INVENTORY_CATEGORIES[number];
+
+// Type for ingredients scanned via Gemini
+export interface ScannedIngredient {
+  id: string; // Generated on the client to track items easily
+  name: string;
+  category: string;
+  amount: string;
+  unit: string;
+  expires_at: string; // YYYY-MM-DD
+  box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] mapped 0-1000
+}
+
+export interface DbGroceryListItem {
+  id: string; // uuid
+  user_id: string; // uuid
+  name: string;
+  amount: string | null;
+  unit: string | null;
+  created_at: string;
 }

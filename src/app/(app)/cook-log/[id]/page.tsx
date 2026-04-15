@@ -310,12 +310,12 @@ export default function CookSessionDetailPage() {
               disabled={savingVariant}
               className="mt-4 w-full py-3 rounded-xl bg-accent/10 border border-accent/20 text-accent text-sm font-medium hover:bg-accent/20 transition-all cursor-pointer disabled:opacity-60"
             >
-              {savingVariant ? "Saving..." : "💾 Save as Recipe Variant"}
+              {savingVariant ? "Saving..." : "💾 Save as Recipe Iteration"}
             </button>
           )}
           {variantSaved && (
             <div className="mt-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm text-center font-medium">
-              ✅ Saved as a recipe variant!
+              ✅ Saved as a recipe Iteration!
             </div>
           )}
         </div>

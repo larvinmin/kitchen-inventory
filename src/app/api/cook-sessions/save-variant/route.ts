@@ -4,8 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 /**
  * POST /api/cook-sessions/save-variant
  *
- * Creates a recipe variant (offshoot) from a cook session's substitutions.
- * The variant is a full recipe linked to the original via parent_recipe_id.
+ * Creates a recipe iteration (offshoot) from a cook session's substitutions.
+ * The iteration is a full recipe linked to the original via parent_recipe_id.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
