@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🍳 Kitchen Inventory
+
+A recipe management app that lets you import recipes from Instagram Reels, cook with ingredient substitutions, photograph your meals, and rank them using a Beli-style scoring system.
+
+Built with **Next.js 16**, **Supabase**, **Gemini AI**, and **Apify**.
+
+## Features
+
+- **Recipe Importer** — Paste an Instagram Reel URL → Apify scrapes the content → Gemini extracts structured recipe data (from caption, transcript, or video comprehension)
+- **Cooking Sessions** — Cook recipes with ingredient swaps, track substitutions, and add notes
+- **Photo Upload** — Photograph your finished meals (stored in Supabase Storage)
+- **Beli-Style Ranking** — Rate meals as bad/ok/good, then refine position via pairwise comparisons. Scores are distributed along a bell curve within each category (0–3.3, 3.3–6.7, 6.7–10)
+- **Cook Log** — View all meals ranked by score with drag-and-drop reordering
+- **Recipe Variants** — Save substituted recipes as variants linked to the original
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 20+
+- A [Supabase](https://supabase.com) project
+- An [Apify](https://apify.com) account (for Instagram scraping)
+- Google AI credentials — either:
+  - [AI Studio](https://aistudio.google.com) API key, or
+  - [Google Cloud](https://console.cloud.google.com) project with Vertex AI enabled
+
+### Setup
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure environment:**
+   ```bash
+   cp .env.local.example .env.local
+   ```
+   Fill in your API keys — see `.env.local.example` for details.
+
+3. **Set up Supabase:**
+   - Create a new project at [supabase.com](https://supabase.com)
+   - Run both migration files in the SQL Editor:
+     - `supabase/migrations/001_initial_schema.sql`
+     - `supabase/migrations/002_cooking_sessions.sql`
+   - Create a **Storage bucket** named `meal-photos` (set to Public)
+
+4. **If using Vertex AI**, authenticate:
+   ```bash
+   gcloud auth application-default login
+   ```
+
+5. **Run the dev server:**
+   ```bash
+   npm run dev
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000)
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router) |
+| Database | Supabase (PostgreSQL + Auth + Storage) |
+| AI | Google Gemini 2.5 Flash (caption/video extraction) |
+| Scraping | Apify (Instagram Reel Scraper) |
+| Styling | Tailwind CSS v4 |
+| Language | TypeScript |
+
+## Project Structure
+
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+src/
+├── app/
+│   ├── (app)/           # Authenticated routes
+│   │   ├── recipes/     # Recipe library + detail + cook flow
+│   │   ├── cook-log/    # Rankings + session detail
+│   │   └── import/      # Recipe importer
+│   ├── (auth)/          # Login / signup
+│   └── api/             # API routes
+│       ├── cook-sessions/
+│       ├── import/
+│       └── upload-photo/
+├── components/          # Shared UI components
+└── lib/                 # Utilities
+    ├── supabase/        # Supabase client helpers
+    ├── apify.ts         # Instagram scraping (REST API)
+    ├── gemini.ts        # AI recipe extraction
+    ├── ranking.ts       # Beli-style bell curve scoring
+    └── types.ts         # TypeScript interfaces
+```
