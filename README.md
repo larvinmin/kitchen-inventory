@@ -1,6 +1,6 @@
-# 🍳 Kitchen Inventory
+# Kitchen Inventory
 
-A recipe management app that lets you import recipes from Instagram Reels, cook with ingredient substitutions, photograph your meals, and rank them using a Beli-style scoring system.
+A recipe management app that lets you import recipes from Instagram Reels, cook with ingredient substitutions, photograph your meals, and rank them.
 
 Built with **Next.js 16**, **Supabase**, **Gemini AI**, and **Apify**.
 
