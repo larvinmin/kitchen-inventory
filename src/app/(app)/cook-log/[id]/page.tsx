@@ -13,8 +13,8 @@ export default function CookSessionDetailPage() {
   const [session, setSession] = useState<CookSessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
-  const [savingVariant, setSavingVariant] = useState(false);
-  const [variantSaved, setVariantSaved] = useState(false);
+  const [savingIteration, setSavingIteration] = useState(false);
+  const [iterationSaved, setIterationSaved] = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
@@ -61,24 +61,24 @@ export default function CookSessionDetailPage() {
     setDeleting(false);
   };
 
-  const handleSaveAsVariant = async () => {
+  const handleSaveAsIteration = async () => {
     if (!session || session.cook_substitutions.length === 0) return;
-    setSavingVariant(true);
+    setSavingIteration(true);
 
     try {
-      const res = await fetch("/api/cook-sessions/save-variant", {
+      const res = await fetch("/api/cook-sessions/save-iteration", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: session.id }),
       });
 
       if (res.ok) {
-        setVariantSaved(true);
+        setIterationSaved(true);
       }
     } catch (err) {
-      console.error("Failed to save variant:", err);
+      console.error("Failed to save iteration:", err);
     } finally {
-      setSavingVariant(false);
+      setSavingIteration(false);
     }
   };
 
@@ -369,17 +369,17 @@ export default function CookSessionDetailPage() {
             )}
           </div>
 
-          {/* Save as Variant */}
-          {!session.variant_recipe_id && !variantSaved && (
+          {/* Save as Iteration */}
+          {!session.variant_recipe_id && !iterationSaved && (
             <button
-              onClick={handleSaveAsVariant}
-              disabled={savingVariant}
+              onClick={handleSaveAsIteration}
+              disabled={savingIteration}
               className="mt-6 w-full py-3.5 rounded-xl bg-accent text-white text-sm font-bold hover:bg-accent-hover transition-all cursor-pointer shadow-lg shadow-accent/20 active:scale-[0.98] disabled:opacity-60"
             >
-              {savingVariant ? "Saving..." : "💾 Save as Recipe Iteration"}
+              {savingIteration ? "Saving..." : "💾 Save as Recipe Iteration"}
             </button>
           )}
-          {variantSaved && (
+          {iterationSaved && (
             <div className="mt-6 py-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm text-center font-bold">
               ✅ Saved as a recipe Iteration!
             </div>

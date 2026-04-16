@@ -57,6 +57,26 @@ export default function ImportPage() {
         return;
       }
 
+      // Proxy-download the Instagram CDN thumbnail through our server so we
+      // store a permanent Supabase Storage URL instead of an ephemeral CDN URL
+      // that expires and is blocked by browser hotlink protection.
+      let thumbnailUrl: string | null = editedRecipe.sourceThumbnail || null;
+      if (thumbnailUrl) {
+        try {
+          const proxyRes = await fetch("/api/proxy-thumbnail", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: thumbnailUrl }),
+          });
+          if (proxyRes.ok) {
+            const proxyData = await proxyRes.json();
+            thumbnailUrl = proxyData.url ?? thumbnailUrl;
+          }
+        } catch {
+          // Non-fatal — fall back to the original URL if proxying fails
+        }
+      }
+
       // 1. Insert the recipe
       const { data: recipeRow, error: recipeError } = await supabase
         .from("recipes")
@@ -72,7 +92,7 @@ export default function ImportPage() {
           tags: editedRecipe.tags,
           source_url: editedRecipe.sourceUrl || null,
           source_platform: editedRecipe.sourcePlatform || null,
-          source_thumbnail: editedRecipe.sourceThumbnail || null,
+          source_thumbnail: thumbnailUrl,
         })
         .select("id")
         .single();

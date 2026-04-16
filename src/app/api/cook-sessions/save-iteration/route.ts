@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * POST /api/cook-sessions/save-variant
+ * POST /api/cook-sessions/save-iteration
  *
  * Creates a recipe iteration (offshoot) from a cook session's substitutions.
  * The iteration is a full recipe linked to the original via parent_recipe_id.
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
 
   if (session.variant_recipe_id) {
     return NextResponse.json(
-      { error: "Variant already exists for this session" },
+      { error: "Iteration already exists for this session" },
       { status: 400 }
     );
   }
@@ -51,23 +51,23 @@ export async function POST(request: Request) {
   const substitutions = session.cook_substitutions || [];
   const modifiedInstructions = session.modified_instructions;
 
-  // Build substitution naming
-  let variantTitle = originalRecipe.title;
+  // Build iteration title from substitution names
+  let iterationTitle = originalRecipe.title;
   if (substitutions.length > 0) {
     const subNames = substitutions
       .filter((s: any) => s.sub_type !== "deletion")
       .map((s: { substitute_ingredient_name: string }) => s.substitute_ingredient_name)
       .slice(0, 3)
       .join(", ");
-    variantTitle = `${originalRecipe.title} (Iterated with ${subNames || "changes"})`;
+    iterationTitle = `${originalRecipe.title} (Iterated with ${subNames || "changes"})`;
   }
 
-  // Create the variant recipe
-  const { data: variantRecipe, error: createError } = await supabase
+  // Create the iteration recipe
+  const { data: iterationRecipe, error: createError } = await supabase
     .from("recipes")
     .insert({
       user_id: user.id,
-      title: variantTitle,
+      title: iterationTitle,
       description: originalRecipe.description,
       servings: originalRecipe.servings,
       prep_time: originalRecipe.prep_time,
@@ -83,10 +83,10 @@ export async function POST(request: Request) {
     .select()
     .single();
 
-  if (createError || !variantRecipe) {
-    console.error("Failed to create variant recipe:", createError);
+  if (createError || !iterationRecipe) {
+    console.error("Failed to create iteration recipe:", createError);
     return NextResponse.json(
-      { error: "Failed to create variant" },
+      { error: "Failed to create iteration" },
       { status: 500 }
     );
   }
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
 
   let currentOrder = 0;
 
-  // 1. Handle original ingredients (Copy or Swap or Skip if Deleted)
+  // 1. Handle original ingredients (copy as-is, swap, or skip if deleted)
   if (originalIngredients) {
     for (const ri of originalIngredients) {
       const sub = substitutions.find(
@@ -114,10 +114,10 @@ export async function POST(request: Request) {
           continue;
         }
 
-        // It was a swap
+        // It was a swap — use the substitute
         const ingredientId = await getOrCreateIngredient(supabase, user.id, sub.substitute_ingredient_name);
         await supabase.from("recipe_ingredients").insert({
-          recipe_id: variantRecipe.id,
+          recipe_id: iterationRecipe.id,
           ingredient_id: ingredientId,
           amount: sub.substitute_amount || ri.amount,
           unit: sub.substitute_unit || ri.unit,
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
       } else {
         // Copy as-is
         await supabase.from("recipe_ingredients").insert({
-          recipe_id: variantRecipe.id,
+          recipe_id: iterationRecipe.id,
           ingredient_id: ri.ingredient_id,
           amount: ri.amount,
           unit: ri.unit,
@@ -138,28 +138,28 @@ export async function POST(request: Request) {
     }
   }
 
-  // 2. Handle additions (New ingredients not in the original recipe)
+  // 2. Handle additions (new ingredients not in the original recipe)
   const additions = substitutions.filter((s: any) => s.sub_type === "addition");
   for (const add of additions) {
-     const ingredientId = await getOrCreateIngredient(supabase, user.id, add.substitute_ingredient_name);
-     await supabase.from("recipe_ingredients").insert({
-        recipe_id: variantRecipe.id,
-        ingredient_id: ingredientId,
-        amount: add.substitute_amount || null,
-        unit: add.substitute_unit || null,
-        notes: add.substitute_notes || null,
-        order_index: currentOrder++,
-     });
+    const ingredientId = await getOrCreateIngredient(supabase, user.id, add.substitute_ingredient_name);
+    await supabase.from("recipe_ingredients").insert({
+      recipe_id: iterationRecipe.id,
+      ingredient_id: ingredientId,
+      amount: add.substitute_amount || null,
+      unit: add.substitute_unit || null,
+      notes: add.substitute_notes || null,
+      order_index: currentOrder++,
+    });
   }
 
-  // Link the variant to the cook session
+  // Link the iteration to the cook session
   await supabase
     .from("cook_sessions")
-    .update({ variant_recipe_id: variantRecipe.id })
+    .update({ variant_recipe_id: iterationRecipe.id })
     .eq("id", sessionId);
 
   return NextResponse.json(
-    { variant: variantRecipe },
+    { iteration: iterationRecipe },
     { status: 201 }
   );
 }

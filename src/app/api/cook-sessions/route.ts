@@ -24,15 +24,26 @@ export async function GET() {
       recipes!cook_sessions_recipe_id_fkey (id, title, source_thumbnail, tags)
     `
     )
-    .eq("user_id", user.id)
-    .order("rating_score", { ascending: false, nullsFirst: false });
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("Failed to fetch cook sessions:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ sessions: data || [] });
+  // Sort by category priority (good → ok → bad), then by rank within category.
+  // Sorting by score alone is unreliable because boundary scores (6.7, 3.3) are
+  // shared exactly between the bottom of one bucket and the top of the next,
+  // causing DB tie-breaking to randomly flip their order.
+  const CATEGORY_ORDER: Record<string, number> = { good: 0, ok: 1, bad: 2 };
+  const sorted = (data || []).slice().sort((a, b) => {
+    const catA = CATEGORY_ORDER[a.rating_category ?? ""] ?? 3;
+    const catB = CATEGORY_ORDER[b.rating_category ?? ""] ?? 3;
+    if (catA !== catB) return catA - catB;
+    return (a.rating_rank ?? 0) - (b.rating_rank ?? 0);
+  });
+
+  return NextResponse.json({ sessions: sorted });
 }
 
 /**
