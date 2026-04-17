@@ -50,6 +50,35 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Onboarding gate: authenticated users without a customized username
+  // are funnelled to the profile page until they pick one. This guarantees
+  // every social interaction (follows, feed, notifications) has a stable
+  // human-readable handle to attach to.
+  if (user && !isPublicPath) {
+    const path = request.nextUrl.pathname;
+    const onboardingExempt =
+      path.startsWith("/profile") ||
+      path.startsWith("/api/") ||
+      path.startsWith("/_next/");
+
+    if (!onboardingExempt) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("username_customized")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      // Send to onboarding if profile is missing entirely (auto-create trigger
+      // failed) or hasn't been customized yet.
+      if (!profile || profile.username_customized === false) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/profile";
+        url.searchParams.set("onboarding", "1");
+        return NextResponse.redirect(url);
+      }
+    }
+  }
+
   return supabaseResponse;
 }
 

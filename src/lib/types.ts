@@ -98,7 +98,11 @@ export type RatingCategory = "bad" | "ok" | "good";
 export interface DbCookSession {
   id: string;
   user_id: string;
-  recipe_id: string;
+  // Nullable: a cook session is a historical event that survives the
+  // deletion of its source recipe. When the recipe is removed from the
+  // user's library, the FK clears to null and the UI falls back to the
+  // snapshot fields below.
+  recipe_id: string | null;
   variant_recipe_id: string | null;
   notes: string | null;
   photo_url: string | null;
@@ -109,6 +113,12 @@ export interface DbCookSession {
   started_at: string;
   completed_at: string | null;
   created_at: string;
+  // Denormalized snapshot, populated by a BEFORE INSERT/UPDATE trigger
+  // (see migration 012). Lets cook log entries render after the source
+  // recipe is deleted or renamed.
+  recipe_title: string | null;
+  recipe_thumbnail: string | null;
+  recipe_tags: string[] | null;
 }
 
 export type CookSubstitutionType = "swap" | "addition" | "deletion";
@@ -127,14 +137,18 @@ export interface DbCookSubstitution {
   sub_type: CookSubstitutionType;
 }
 
-// Joined session with recipe info for display
+// Joined session with recipe info for display.
+// `recipes` is null when the source recipe has been deleted from the
+// user's library; consumers should fall back to the snapshot fields
+// (`recipe_title`, `recipe_thumbnail`, `recipe_tags`) on `DbCookSession`.
 export interface CookSessionWithRecipe extends DbCookSession {
-  recipes: Pick<DbRecipe, "id" | "title" | "source_thumbnail" | "tags">;
+  recipes: Pick<DbRecipe, "id" | "title" | "source_thumbnail" | "tags"> | null;
 }
 
-// Full detail including substitutions
+// Full detail including substitutions. `recipes` is null when the source
+// recipe has been deleted (see CookSessionWithRecipe above).
 export interface CookSessionDetail extends DbCookSession {
-  recipes: DbRecipe;
+  recipes: DbRecipe | null;
   cook_substitutions: DbCookSubstitution[];
 }
 
@@ -210,4 +224,61 @@ export interface DbGroceryListItem {
   amount: string | null;
   unit: string | null;
   created_at: string;
+}
+
+// ─── Social / Friends types ──────────────────────────────────
+
+export interface DbProfile {
+  id: string;
+  username: string;
+  display_name: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  is_private: boolean;
+  username_customized: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type FollowStatus = "pending" | "accepted";
+
+export interface DbFollow {
+  id: string;
+  follower_id: string;
+  followee_id: string;
+  status: FollowStatus;
+  created_at: string;
+  accepted_at: string | null;
+}
+
+export type NotificationType =
+  | "follow_request"
+  | "follow_accepted"
+  | "recipe_cooked";
+
+export interface DbNotification {
+  id: string;
+  recipient_id: string;
+  actor_id: string;
+  type: NotificationType;
+  // Polymorphic reference: a follow id, cook session id, or recipe id depending on type.
+  subject_id: string | null;
+  // Denormalized snippets so notification rendering doesn't need joins.
+  metadata: {
+    actor_username?: string;
+    actor_display_name?: string | null;
+    actor_avatar_url?: string | null;
+    recipe_id?: string;
+    recipe_title?: string;
+    recipe_thumbnail?: string | null;
+    cook_session_id?: string;
+    [k: string]: unknown;
+  };
+  read_at: string | null;
+  created_at: string;
+}
+
+// Used by feed cards: a cook session enriched with the cook's profile.
+export interface FeedItem extends CookSessionWithRecipe {
+  profiles: Pick<DbProfile, "id" | "username" | "display_name" | "avatar_url">;
 }

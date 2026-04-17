@@ -48,6 +48,14 @@ export async function POST(request: Request) {
   }
 
   const originalRecipe = session.recipes;
+  if (!originalRecipe) {
+    // The source recipe has been removed from the library, so we can't
+    // build a derivative from it. The cook session itself stays intact.
+    return NextResponse.json(
+      { error: "Original recipe is no longer in your library" },
+      { status: 400 }
+    );
+  }
   const substitutions = session.cook_substitutions || [];
   const modifiedInstructions = session.modified_instructions;
 

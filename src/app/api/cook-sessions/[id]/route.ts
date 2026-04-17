@@ -18,6 +18,7 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // RLS gates ownership / follower visibility — no need to filter user_id here.
   const { data, error } = await supabase
     .from("cook_sessions")
     .select(
@@ -28,7 +29,6 @@ export async function GET(
     `
     )
     .eq("id", id)
-    .eq("user_id", user.id)
     .single();
 
   if (error || !data) {
@@ -38,7 +38,11 @@ export async function GET(
     );
   }
 
-  return NextResponse.json({ session: data });
+  // Tag with whether the viewer is the owner so the UI can hide owner-only
+  // actions (delete, edit notes, save iteration) for friend views.
+  const isOwner = data.user_id === user.id;
+
+  return NextResponse.json({ session: data, isOwner });
 }
 
 /**

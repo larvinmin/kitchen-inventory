@@ -17,18 +17,40 @@ export default function RecipesPage() {
   useEffect(() => {
     let cancelled = false;
     const supabase = createClient();
-    supabase
-      .from("recipes")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (!error && data) {
-          setRecipes(data);
-        }
+
+    const load = async () => {
+      setLoading(true);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled) return;
+      if (!user) {
+        setRecipes([]);
         setLoading(false);
-      });
-    return () => { cancelled = true; };
+        return;
+      }
+      const { data, error } = await supabase
+        .from("recipes")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (!error && data) setRecipes(data);
+      setLoading(false);
+    };
+
+    load();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      if (!cancelled) load();
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const filteredRecipes = recipes.filter((recipe) => {

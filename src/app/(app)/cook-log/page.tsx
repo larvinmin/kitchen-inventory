@@ -4,6 +4,20 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import type { CookSessionWithRecipe, RatingCategory } from "@/lib/types";
 
+// Cook sessions outlive their source recipe — when a recipe is deleted from
+// the library, `session.recipes` becomes null and we fall back to the
+// snapshot fields the DB trigger captured at cook time.
+function displayRecipe(session: CookSessionWithRecipe) {
+  return {
+    id: session.recipes?.id ?? null,
+    title:
+      session.recipes?.title ?? session.recipe_title ?? "Removed recipe",
+    thumbnail:
+      session.recipes?.source_thumbnail ?? session.recipe_thumbnail ?? null,
+    isRemoved: !session.recipes,
+  };
+}
+
 export default function CookLogPage() {
   const [sessions, setSessions] = useState<CookSessionWithRecipe[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,7 +205,9 @@ export default function CookLogPage() {
           </div>
           <div className="glass rounded-xl p-3 text-center">
             <div className="text-xl font-bold text-accent truncate px-1">
-              {bestMeal?.recipes?.title?.split(" ").slice(0, 2).join(" ") || "—"}
+              {bestMeal
+                ? displayRecipe(bestMeal).title.split(" ").slice(0, 2).join(" ")
+                : "—"}
             </div>
             <div className="text-xs text-text-tertiary">Best Meal</div>
           </div>
@@ -204,6 +220,7 @@ export default function CookLogPage() {
           {sessions.map((session, idx) => {
             const badge = getCategoryBadge(session.rating_category);
             const isBreak = categoryBreaks.has(idx);
+            const recipe = displayRecipe(session);
 
             return (
               <div key={session.id}>
@@ -256,10 +273,10 @@ export default function CookLogPage() {
                       </span>
 
                       {/* Thumbnail */}
-                      {session.recipes?.source_thumbnail ? (
+                      {recipe.thumbnail ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={session.recipes.source_thumbnail}
+                          src={recipe.thumbnail}
                           alt=""
                           referrerPolicy="no-referrer"
                           className="w-10 h-10 rounded-lg object-cover shrink-0"
@@ -273,7 +290,7 @@ export default function CookLogPage() {
                       {/* Info */}
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-medium text-text-primary truncate">
-                          {session.recipes?.title}
+                          {recipe.title}
                         </h3>
                         <p className="text-xs text-text-tertiary">
                           {new Date(session.completed_at || session.created_at).toLocaleDateString()}
@@ -301,10 +318,10 @@ export default function CookLogPage() {
                             alt=""
                             className="w-12 h-12 rounded-lg object-cover shrink-0"
                           />
-                        ) : session.recipes?.source_thumbnail ? (
+                        ) : recipe.thumbnail ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={session.recipes.source_thumbnail}
+                            src={recipe.thumbnail}
                             alt=""
                             referrerPolicy="no-referrer"
                             className="w-12 h-12 rounded-lg object-cover shrink-0"
@@ -318,16 +335,23 @@ export default function CookLogPage() {
                         {/* Info */}
                         <div className="flex-1 min-w-0">
                           <h3 className="text-sm font-medium text-text-primary truncate">
-                            {session.recipes?.title}
+                            {recipe.title}
                           </h3>
-                          <p className="text-xs text-text-tertiary">
-                            {new Date(
-                              session.completed_at || session.created_at
-                            ).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })}
+                          <p className="text-xs text-text-tertiary flex items-center gap-1.5">
+                            <span>
+                              {new Date(
+                                session.completed_at || session.created_at
+                              ).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </span>
+                            {recipe.isRemoved && (
+                              <span className="px-1.5 py-0.5 rounded-md bg-bg-tertiary border border-border text-[10px] text-text-tertiary">
+                                Removed from library
+                              </span>
+                            )}
                           </p>
                         </div>
 

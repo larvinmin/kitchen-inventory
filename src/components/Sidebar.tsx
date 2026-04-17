@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
+import NotificationBell from "@/components/NotificationBell";
 
 const navItems = [
   {
@@ -116,6 +117,44 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    label: "Feed",
+    href: "/feed",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.75 5.25h16.5m-16.5 4.5h16.5m-16.5 4.5h10.5m-10.5 4.5h7.5"
+        />
+      </svg>
+    ),
+  },
+  {
+    label: "Profile",
+    href: "/profile",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
@@ -137,18 +176,26 @@ export default function Sidebar() {
         <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-accent/10 border border-accent/20">
           <span className="text-xl">🍳</span>
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h2 className="font-bold text-text-primary text-sm">
             Kitchen Inventory
           </h2>
           <p className="text-xs text-text-tertiary">Recipe manager</p>
         </div>
+        <NotificationBell />
       </div>
 
       {/* Nav */}
       <nav className="flex-1 space-y-1">
         {navItems.map((item) => {
-          const isActive = pathname.startsWith(item.href);
+          // Default: treat a nav item as active when the current path is the
+          // exact href or a deeper sub-route. We special-case `/recipes` so
+          // that `/recipes/write` only lights up "Write Recipe", not "Recipes".
+          const isActive =
+            item.href === "/recipes"
+              ? (pathname === "/recipes" || pathname.startsWith("/recipes/")) &&
+                !pathname.startsWith("/recipes/write")
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
             <Link
               key={item.href}

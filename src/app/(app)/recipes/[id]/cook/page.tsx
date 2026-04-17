@@ -779,7 +779,11 @@ export default function CookPage() {
         <div className="glass rounded-2xl p-6">
           <p className="text-sm text-text-secondary text-center mb-5">Was your meal <span className="font-medium text-text-primary">better</span> or <span className="font-medium text-text-primary">worse</span> than...</p>
           <div className="glass rounded-xl p-4 mb-6">
-            <h3 className="font-semibold text-text-primary">{categoryItems[currentCompareIdx].recipes.title}</h3>
+            <h3 className="font-semibold text-text-primary">
+              {categoryItems[currentCompareIdx].recipes?.title ??
+                categoryItems[currentCompareIdx].recipe_title ??
+                "Removed recipe"}
+            </h3>
           </div>
           <div className="flex gap-3">
             <button onClick={handleBetter} className="flex-1 py-4 rounded-xl bg-green-500/10 text-green-400 font-semibold  hover:bg-green-500/20 active:scale-[0.97]">👆 Better</button>

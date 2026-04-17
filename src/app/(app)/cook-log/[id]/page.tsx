@@ -11,6 +11,7 @@ export default function CookSessionDetailPage() {
   const sessionId = params.id as string;
 
   const [session, setSession] = useState<CookSessionDetail | null>(null);
+  const [isOwner, setIsOwner] = useState(true);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [savingIteration, setSavingIteration] = useState(false);
@@ -24,6 +25,7 @@ export default function CookSessionDetailPage() {
       .then((r) => r.json())
       .then((data) => {
         setSession(data.session || null);
+        setIsOwner(data.isOwner ?? true);
         setNotesValue(data.session?.notes || "");
         setLoading(false);
       })
@@ -167,7 +169,7 @@ export default function CookSessionDetailPage() {
       <div className="flex items-start justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">
-            {session.recipes?.title}
+            {session.recipes?.title ?? session.recipe_title ?? "Removed recipe"}
           </h1>
           <p className="text-sm text-text-secondary mt-1">
             Cooked on{" "}
@@ -180,6 +182,14 @@ export default function CookSessionDetailPage() {
               year: "numeric",
             })}
           </p>
+          {!session.recipes && session.recipe_id === null && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-text-tertiary px-2 py-1 rounded-md bg-bg-tertiary border border-border">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              The original recipe was removed from the library. Your cook entry is preserved.
+            </p>
+          )}
         </div>
 
         {/* Score (if no photo) */}
@@ -192,34 +202,63 @@ export default function CookSessionDetailPage() {
         )}
       </div>
 
-      {/* Link to Original Recipe */}
-      <Link
-        href={`/recipes/${session.recipe_id}`}
-        className="glass rounded-xl p-3 flex items-center gap-3 mb-6 hover:border-border-hover transition-all"
-      >
-        {session.recipes?.source_thumbnail ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={session.recipes.source_thumbnail}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="w-10 h-10 rounded-lg object-cover shrink-0"
-          />
-        ) : (
-          <div className="w-10 h-10 rounded-lg bg-bg-tertiary flex items-center justify-center shrink-0">
-            <span className="text-sm">🍽️</span>
+      {/* Link to Original Recipe — only when the recipe still exists. If it
+          was deleted from the library, the cook session stays intact but
+          there's nothing to link to. */}
+      {session.recipes && session.recipe_id ? (
+        <Link
+          href={`/recipes/${session.recipe_id}`}
+          className="glass rounded-xl p-3 flex items-center gap-3 mb-6 hover:border-border-hover transition-all"
+        >
+          {session.recipes.source_thumbnail ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={session.recipes.source_thumbnail}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-10 h-10 rounded-lg object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-bg-tertiary flex items-center justify-center shrink-0">
+              <span className="text-sm">🍽️</span>
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <span className="text-xs text-text-tertiary">Original Recipe</span>
+            <h3 className="text-sm font-medium text-text-primary truncate">
+              {session.recipes.title}
+            </h3>
           </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <span className="text-xs text-text-tertiary">Original Recipe</span>
-          <h3 className="text-sm font-medium text-text-primary truncate">
-            {session.recipes?.title}
-          </h3>
+          <svg className="w-4 h-4 text-text-tertiary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </Link>
+      ) : session.recipe_thumbnail || session.recipe_title ? (
+        <div className="glass rounded-xl p-3 flex items-center gap-3 mb-6 opacity-80">
+          {session.recipe_thumbnail ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={session.recipe_thumbnail}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-10 h-10 rounded-lg object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-bg-tertiary flex items-center justify-center shrink-0">
+              <span className="text-sm">🍽️</span>
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <span className="text-xs text-text-tertiary">Original Recipe</span>
+            <h3 className="text-sm font-medium text-text-primary truncate">
+              {session.recipe_title}
+            </h3>
+          </div>
+          <span className="text-[10px] uppercase tracking-wider text-text-tertiary px-2 py-1 rounded-md border border-border">
+            Removed
+          </span>
         </div>
-        <svg className="w-4 h-4 text-text-tertiary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-        </svg>
-      </Link>
+      ) : null}
 
       {/* Notes — always shown, editable */}
       <div className="glass rounded-2xl p-5 mb-6">
@@ -231,12 +270,14 @@ export default function CookSessionDetailPage() {
             Notes
           </h2>
           {!editingNotes ? (
-            <button
-              onClick={() => { setNotesValue(session.notes || ""); setEditingNotes(true); }}
-              className="text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer px-2 py-1 rounded-lg hover:bg-accent/10"
-            >
-              {session.notes ? "Edit" : "+ Add Notes"}
-            </button>
+            isOwner ? (
+              <button
+                onClick={() => { setNotesValue(session.notes || ""); setEditingNotes(true); }}
+                className="text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer px-2 py-1 rounded-lg hover:bg-accent/10"
+              >
+                {session.notes ? "Edit" : "+ Add Notes"}
+              </button>
+            ) : null
           ) : (
             <div className="flex gap-2">
               <button
@@ -349,7 +390,18 @@ export default function CookSessionDetailPage() {
                    <div className="flex items-center gap-2">
                       <span className="text-lg">📝</span>
                       <span className="text-sm font-semibold text-text-primary">
-                         You changed {Math.abs((session.modified_instructions?.length || 0) - (typeof session.recipes?.instructions === 'string' ? JSON.parse(session.recipes.instructions).length : (session.recipes?.instructions?.length || 0)))} steps
+                         {(() => {
+                           // The "you changed N steps" diff needs the original
+                           // recipe to compare against. If the recipe was
+                           // removed from the library, just count steps.
+                           const modLen = session.modified_instructions?.length || 0;
+                           const origRaw = session.recipes?.instructions;
+                           if (!origRaw) return `${modLen} modified step${modLen === 1 ? "" : "s"}`;
+                           const origLen = typeof origRaw === "string"
+                             ? JSON.parse(origRaw).length
+                             : origRaw.length || 0;
+                           return `You changed ${Math.abs(modLen - origLen)} steps`;
+                         })()}
                       </span>
                    </div>
                    <button 
@@ -369,8 +421,10 @@ export default function CookSessionDetailPage() {
             )}
           </div>
 
-          {/* Save as Iteration */}
-          {!session.variant_recipe_id && !iterationSaved && (
+          {/* Save as Iteration — owner only, and only when the source
+              recipe still exists in the library (the iteration is built
+              by deep-copying it). */}
+          {isOwner && session.recipes && !session.variant_recipe_id && !iterationSaved && (
             <button
               onClick={handleSaveAsIteration}
               disabled={savingIteration}
@@ -379,7 +433,7 @@ export default function CookSessionDetailPage() {
               {savingIteration ? "Saving..." : "💾 Save as Recipe Iteration"}
             </button>
           )}
-          {iterationSaved && (
+          {isOwner && iterationSaved && (
             <div className="mt-6 py-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm text-center font-bold">
               ✅ Saved as a recipe Iteration!
             </div>
@@ -387,16 +441,18 @@ export default function CookSessionDetailPage() {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-3 mt-8">
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="flex-1 py-3 rounded-xl bg-bg-tertiary border border-border text-text-secondary text-sm font-medium hover:text-error hover:border-error/20 hover:bg-error/10 transition-all cursor-pointer disabled:opacity-50"
-        >
-          {deleting ? "Deleting..." : "🗑 Delete Entry"}
-        </button>
-      </div>
+      {/* Actions — owner only */}
+      {isOwner && (
+        <div className="flex gap-3 mt-8">
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="flex-1 py-3 rounded-xl bg-bg-tertiary border border-border text-text-secondary text-sm font-medium hover:text-error hover:border-error/20 hover:bg-error/10 transition-all cursor-pointer disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "🗑 Delete Entry"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

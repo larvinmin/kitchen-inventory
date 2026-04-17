@@ -5,19 +5,66 @@ import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import fuzzysort from "fuzzysort";
-import type { RecipeWithIngredients, InventoryItemWithIngredient } from "@/lib/types";
+import type {
+  RecipeWithIngredients,
+  InventoryItemWithIngredient,
+  RecipeIngredient,
+} from "@/lib/types";
+
+// Shape used by the edit-mode UI. Mirrors RecipeIngredient but keeps a stable
+// client-only key so React can re-render rows as the user adds/removes them
+// without losing focus.
+type EditableIngredient = RecipeIngredient & { _key: string };
+
+function toEditableIngredients(
+  recipe: RecipeWithIngredients | null
+): EditableIngredient[] {
+  if (!recipe) return [];
+  return [...(recipe.recipe_ingredients || [])]
+    .sort((a, b) => a.order_index - b.order_index)
+    .map((ri, i) => ({
+      _key: `${ri.id ?? i}`,
+      name: ri.ingredients?.name || "",
+      amount: ri.amount || "",
+      unit: ri.unit || "",
+      notes: ri.notes || "",
+    }));
+}
+
+function toEditableInstructions(recipe: RecipeWithIngredients | null): string[] {
+  if (!recipe) return [];
+  const raw = recipe.instructions;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(raw) ? [...raw] : [];
+}
 
 export default function RecipeDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [recipe, setRecipe] = useState<RecipeWithIngredients | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [inventory, setInventory] = useState<InventoryItemWithIngredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [buildingList, setBuildingList] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
-  
+
+  // Full-recipe edit mode (ingredients + instructions). Lives separately from
+  // the inline title editor so the title pencil still works while editing.
+  const [isEditingRecipe, setIsEditingRecipe] = useState(false);
+  const [editIngredients, setEditIngredients] = useState<EditableIngredient[]>([]);
+  const [editInstructions, setEditInstructions] = useState<string[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [savingIteration, setSavingIteration] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   // To handle the custom tooltip/popup for matched items
   const [activeTooltipIdx, setActiveTooltipIdx] = useState<number | null>(null);
 
@@ -26,6 +73,10 @@ export default function RecipeDetailPage() {
     const fetchAll = async () => {
       // Fetch recipe
       const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       const recipePromise = supabase
         .from("recipes")
         .select(
@@ -47,7 +98,11 @@ export default function RecipeDetailPage() {
       
       if (cancelled) return;
       if (!recipeRes.error && recipeRes.data) {
-        setRecipe(recipeRes.data as RecipeWithIngredients);
+        const row = recipeRes.data as RecipeWithIngredients;
+        setRecipe(row);
+        setIsOwner(!!user?.id && row.user_id === user.id);
+      } else {
+        setIsOwner(false);
       }
       if (invRes.items) {
         setInventory(invRes.items);
@@ -60,7 +115,12 @@ export default function RecipeDetailPage() {
   }, [params.id]);
 
   const handleDelete = async () => {
-    if (!confirm("Are you sure you want to delete this recipe?")) return;
+    if (
+      !confirm(
+        "Remove this recipe from your library?\n\nYour cook log entries for this recipe will be preserved — only the recipe is removed."
+      )
+    )
+      return;
     setDeleting(true);
 
     const supabase = createClient();
@@ -127,6 +187,127 @@ export default function RecipeDetailPage() {
     if (error) {
       alert("Failed to update recipe title.");
       setRecipe({ ...recipe, title: prevTitle });
+    }
+  };
+
+  const enterEditMode = () => {
+    if (!recipe) return;
+    setEditIngredients(toEditableIngredients(recipe));
+    setEditInstructions(toEditableInstructions(recipe));
+    setEditError(null);
+    setIsEditingRecipe(true);
+  };
+
+  const exitEditMode = () => {
+    setIsEditingRecipe(false);
+    setEditError(null);
+  };
+
+  const updateEditIngredient = (
+    idx: number,
+    field: keyof RecipeIngredient,
+    value: string
+  ) => {
+    setEditIngredients((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row))
+    );
+  };
+
+  const addEditIngredient = () => {
+    setEditIngredients((prev) => [
+      ...prev,
+      { _key: `new-${Date.now()}-${prev.length}`, name: "", amount: "", unit: "", notes: "" },
+    ]);
+  };
+
+  const removeEditIngredient = (idx: number) => {
+    setEditIngredients((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateEditInstruction = (idx: number, value: string) => {
+    setEditInstructions((prev) => prev.map((s, i) => (i === idx ? value : s)));
+  };
+
+  const addEditInstruction = () => {
+    setEditInstructions((prev) => [...prev, ""]);
+  };
+
+  const removeEditInstruction = (idx: number) => {
+    setEditInstructions((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Strip client-only keys and empty rows before shipping to the API.
+  const buildEditPayload = () => ({
+    ingredients: editIngredients
+      .map(({ _key: _ignored, ...rest }) => {
+        void _ignored;
+        return rest;
+      })
+      .filter((ing) => ing.name.trim()),
+    instructions: editInstructions
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  });
+
+  const saveEditToOriginal = async () => {
+    if (!recipe) return;
+    const payload = buildEditPayload();
+    if (payload.ingredients.length === 0 || payload.instructions.length === 0) {
+      setEditError("A recipe needs at least one ingredient and one step.");
+      return;
+    }
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/recipes/${recipe.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to save recipe");
+      }
+      // Refresh from the server so we pick up any normalization (e.g. new
+      // ingredient rows get real ids).
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("recipes")
+        .select(`*, recipe_ingredients ( *, ingredients (*) )`)
+        .eq("id", recipe.id)
+        .single();
+      if (!error && data) setRecipe(data as RecipeWithIngredients);
+      setIsEditingRecipe(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to save recipe");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const saveEditAsIteration = async () => {
+    if (!recipe) return;
+    const payload = buildEditPayload();
+    if (payload.ingredients.length === 0 || payload.instructions.length === 0) {
+      setEditError("A recipe needs at least one ingredient and one step.");
+      return;
+    }
+    setSavingIteration(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/recipes/${recipe.id}/iterate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.recipe) {
+        throw new Error(data.error || "Failed to save iteration");
+      }
+      router.push(`/recipes/${data.recipe.id}`);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to save iteration");
+      setSavingIteration(false);
     }
   };
 
@@ -270,7 +451,7 @@ export default function RecipeDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="flex-1 min-w-0 pr-4">
-          {isEditingTitle ? (
+          {isOwner && isEditingTitle ? (
             <input
               type="text"
               value={editedTitle}
@@ -286,7 +467,7 @@ export default function RecipeDetailPage() {
               onBlur={handleUpdateTitle}
               className="text-2xl font-bold text-text-primary bg-bg-secondary w-full p-1 -ml-1 border border-accent/50 rounded-lg outline-none focus:ring-2 focus:ring-accent/50"
             />
-          ) : (
+          ) : isOwner ? (
             <h1 
               onClick={() => { setIsEditingTitle(true); setEditedTitle(recipe.title); }}
               className="text-2xl font-bold text-text-primary cursor-pointer hover:text-accent transition-colors flex items-center gap-2 group w-full"
@@ -297,6 +478,10 @@ export default function RecipeDetailPage() {
                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
               </svg>
             </h1>
+          ) : (
+            <h1 className="text-2xl font-bold text-text-primary truncate w-full">
+              {recipe.title}
+            </h1>
           )}
           {recipe.description && (
             <p className="text-text-secondary mt-2 leading-relaxed">{recipe.description}</p>
@@ -304,7 +489,34 @@ export default function RecipeDetailPage() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* Favorite */}
+          {/* Edit Recipe — owner only, opens the inline edit mode for
+              ingredients + instructions. Hidden while already editing to
+              avoid a redundant trigger. */}
+          {isOwner && !isEditingRecipe && (
+            <button
+              onClick={enterEditMode}
+              className="px-3 py-2 rounded-xl border border-border bg-bg-tertiary text-text-secondary text-xs font-medium hover:text-accent hover:border-accent/30 hover:bg-accent/5 transition-all cursor-pointer flex items-center gap-1.5"
+              title="Edit ingredients and steps"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
+                />
+              </svg>
+              Edit Recipe
+            </button>
+          )}
+
+          {/* Favorite — owner only (RLS blocks others, but hide to avoid dead clicks) */}
+          {isOwner && !isEditingRecipe && (
           <button
             onClick={toggleFavorite}
             className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
@@ -332,8 +544,10 @@ export default function RecipeDetailPage() {
               />
             </svg>
           </button>
+          )}
 
           {/* Want to Make */}
+          {isOwner && !isEditingRecipe && (
           <button
             onClick={toggleWantToMake}
             className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
@@ -361,8 +575,10 @@ export default function RecipeDetailPage() {
               />
             </svg>
           </button>
+          )}
 
           {/* Build Grocery List */}
+          {!isEditingRecipe && (
           <button
             onClick={buildGroceryList}
             disabled={buildingList}
@@ -373,8 +589,10 @@ export default function RecipeDetailPage() {
                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
              </svg>
           </button>
+          )}
 
           {/* Delete */}
+          {isOwner && !isEditingRecipe && (
           <button
             onClick={handleDelete}
             disabled={deleting}
@@ -395,17 +613,34 @@ export default function RecipeDetailPage() {
               />
             </svg>
           </button>
+          )}
         </div>
       </div>
 
-      {/* Cook This Button */}
-      <Link
-        href={`/recipes/${recipe.id}/cook`}
-        className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-accent text-text-inverse font-bold text-sm hover:bg-accent-hover transition-all active:scale-[0.98] mb-6"
-      >
-        <span className="text-lg">🍳</span>
-        Cook This Recipe
-      </Link>
+      {/* Cook This Button — hidden in edit mode since the user is
+          mid-editing and shouldn't start a cook flow off a dirty recipe. */}
+      {!isEditingRecipe && (
+        <Link
+          href={`/recipes/${recipe.id}/cook`}
+          className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-accent text-text-inverse font-bold text-sm hover:bg-accent-hover transition-all active:scale-[0.98] mb-6"
+        >
+          <span className="text-lg">🍳</span>
+          Cook This Recipe
+        </Link>
+      )}
+
+      {/* Edit-mode banner */}
+      {isEditingRecipe && (
+        <div className="mb-6 p-3 rounded-xl border border-accent/20 bg-accent/5 text-xs text-accent/90 flex items-center gap-2">
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+          </svg>
+          <span>
+            Editing recipe. Save changes to this recipe, or save as a new
+            iteration linked to the original.
+          </span>
+        </div>
+      )}
 
       {/* Meta */}
       <div className="flex flex-wrap gap-3 mb-8">
@@ -459,23 +694,88 @@ export default function RecipeDetailPage() {
 
       {/* Ingredients */}
       <div className="glass rounded-2xl p-6 mb-6">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
-          <svg
-            className="w-5 h-5 text-accent"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
-            />
-          </svg>
-          Ingredients
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+            <svg
+              className="w-5 h-5 text-accent"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+              />
+            </svg>
+            Ingredients
+          </h2>
+          {isEditingRecipe && (
+            <button
+              type="button"
+              onClick={addEditIngredient}
+              className="text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer flex items-center gap-1"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Add
+            </button>
+          )}
+        </div>
 
+        {isEditingRecipe ? (
+          <div className="space-y-2">
+            {editIngredients.map((ing, i) => (
+              <div key={ing._key} className="flex items-center gap-2 group">
+                <input
+                  type="text"
+                  value={ing.amount}
+                  onChange={(e) => updateEditIngredient(i, "amount", e.target.value)}
+                  placeholder="Amt"
+                  className="w-16 px-2 py-2 rounded-lg bg-bg-tertiary border border-border text-text-primary text-sm placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none text-center"
+                />
+                <input
+                  type="text"
+                  value={ing.unit}
+                  onChange={(e) => updateEditIngredient(i, "unit", e.target.value)}
+                  placeholder="Unit"
+                  className="w-20 px-2 py-2 rounded-lg bg-bg-tertiary border border-border text-text-primary text-sm placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none"
+                />
+                <input
+                  type="text"
+                  value={ing.name}
+                  onChange={(e) => updateEditIngredient(i, "name", e.target.value)}
+                  placeholder="Ingredient name"
+                  className="flex-1 px-3 py-2 rounded-lg bg-bg-tertiary border border-border text-text-primary text-sm placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none"
+                />
+                <input
+                  type="text"
+                  value={ing.notes || ""}
+                  onChange={(e) => updateEditIngredient(i, "notes", e.target.value)}
+                  placeholder="Notes"
+                  className="w-28 px-2 py-2 rounded-lg bg-bg-tertiary border border-border text-text-primary text-sm placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none hidden sm:block"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeEditIngredient(i)}
+                  className="p-1.5 rounded-lg text-text-tertiary hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100 cursor-pointer"
+                  title="Remove ingredient"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+            {editIngredients.length === 0 && (
+              <p className="text-xs text-text-tertiary italic">
+                No ingredients yet — click &ldquo;Add&rdquo; to create the first one.
+              </p>
+            )}
+          </div>
+        ) : (
         <ul className="space-y-2">
           {sortedIngredients.map((ri, i) => {
             const matchedInv = getMatch(ri.ingredients?.name);
@@ -520,40 +820,125 @@ export default function RecipeDetailPage() {
             );
           })}
         </ul>
+        )}
       </div>
 
       {/* Instructions */}
       <div className="glass rounded-2xl p-6 mb-6">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
-          <svg
-            className="w-5 h-5 text-accent"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"
-            />
-          </svg>
-          Instructions
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+            <svg
+              className="w-5 h-5 text-accent"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"
+              />
+            </svg>
+            Instructions
+          </h2>
+          {isEditingRecipe && (
+            <button
+              type="button"
+              onClick={addEditInstruction}
+              className="text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer flex items-center gap-1"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Add Step
+            </button>
+          )}
+        </div>
 
-        <ol className="space-y-4">
-          {(instructions as string[]).map((step: string, i: number) => (
-            <li key={i} className="flex gap-3">
-              <span className="flex items-center justify-center w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold shrink-0">
-                {i + 1}
-              </span>
-              <p className="text-sm text-text-secondary leading-relaxed pt-0.5">
-                {step}
+        {isEditingRecipe ? (
+          <div className="space-y-2">
+            {editInstructions.map((step, i) => (
+              <div key={i} className="flex items-start gap-2 group">
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold mt-1.5 shrink-0">
+                  {i + 1}
+                </span>
+                <textarea
+                  value={step}
+                  onChange={(e) => updateEditInstruction(i, e.target.value)}
+                  rows={2}
+                  placeholder={`Step ${i + 1}...`}
+                  className="flex-1 px-3 py-2 rounded-lg bg-bg-tertiary border border-border text-text-primary text-sm placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none resize-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeEditInstruction(i)}
+                  className="p-1.5 rounded-lg text-text-tertiary hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100 mt-1.5 cursor-pointer"
+                  title="Remove step"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+            {editInstructions.length === 0 && (
+              <p className="text-xs text-text-tertiary italic">
+                No steps yet — click &ldquo;Add Step&rdquo; to create the first one.
               </p>
-            </li>
-          ))}
-        </ol>
+            )}
+          </div>
+        ) : (
+          <ol className="space-y-4">
+            {(instructions as string[]).map((step: string, i: number) => (
+              <li key={i} className="flex gap-3">
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold shrink-0">
+                  {i + 1}
+                </span>
+                <p className="text-sm text-text-secondary leading-relaxed pt-0.5">
+                  {step}
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
+
+      {/* Edit mode action bar */}
+      {isEditingRecipe && (
+        <div className="glass rounded-2xl p-4 mb-6 sticky bottom-4 z-20 border border-accent/20 shadow-xl">
+          {editError && (
+            <div className="mb-3 p-3 rounded-xl bg-error/10 border border-error/20 text-xs text-error">
+              {editError}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <button
+              onClick={exitEditMode}
+              disabled={savingEdit || savingIteration}
+              className="px-4 py-2.5 rounded-xl text-sm text-text-secondary bg-bg-tertiary border border-border hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveEditAsIteration}
+              disabled={savingEdit || savingIteration}
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-bg-tertiary border border-accent/30 text-accent hover:bg-accent/10 transition-colors cursor-pointer disabled:opacity-60"
+              title="Create a new recipe linked to this one as a parent"
+            >
+              {savingIteration ? "Saving…" : "Save as new iteration"}
+            </button>
+            <button
+              onClick={saveEditToOriginal}
+              disabled={savingEdit || savingIteration}
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-accent text-text-inverse hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-60"
+              title="Overwrite this recipe with your edits"
+            >
+              {savingEdit ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Source */}
       {recipe.source_url && (
